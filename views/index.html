@@ -1,0 +1,406 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<title>PPV Plasma</title>
+<style type="text/css">
+html, body {
+   height:100%;
+   width: 100%;
+   margin: 0;
+   padding: 0;
+   border: 0;
+   font-family: Helvetica, sans-serif;
+   font-size: 12px;
+   background: #000;
+   color: #ccc;
+}
+#top, .buttons{
+  width: 100%;
+  box-sizing: border-box;
+  padding: 20px;
+}
+#input, .control, .buttons button {
+  font-family: Arial, sans-serif;
+  background: #000;
+  color: #ccc;
+  border: 1px solid #666;
+  border-radius: 5px;
+  padding: 10px;
+}
+#input {
+  font-size: 20px;
+  width: 100%;
+  box-sizing: border-box;
+}
+#input:focus {
+    outline: none;
+    border-color: #8ecaed;
+    box-shadow: 0 0 5px #8ecaed;
+}
+.buttons {
+  display: flex;
+  flex-flow: row wrap;
+}
+.buttons button {
+  flex: 1 0 150px;
+  background: #333;
+  color: #999;
+  margin: 10px;
+  font-size: 1em;
+}
+.slider {
+  flex:1 0 100%;
+  display: flex;
+  padding: 10px 5px;
+  box-sizing: border-box;
+}
+.slider .num {
+  flex:0 0 4ex;
+  margin-left: 10px;
+}
+.slider .slide {
+  flex:1 1 100%;
+}
+h2 {
+  font-size: 1.75em;
+  font-weight:bold;
+  margin: .5em 10px .25em;
+}
+footer {
+  font-size: 11px;
+  margin: 10px 0 0;
+  padding-bottom: 20px;
+  text-align: center;
+}
+footer, footer a{
+  color: #666;
+}
+</style>
+<script src="//www.gstatic.com/cv/js/sender/v1/cast_sender.js" async></script>
+<script src="//ajax.googleapis.com/ajax/libs/jquery/2.2.4/jquery.min.js"></script>
+<script>
+!function($){
+  var applicationID = 'CE5FE9CD',
+    namespace = 'urn:x-cast:it.bhweb.cast',
+    activeBefore = false,
+    session = null,
+    receiverStatus = {},
+    heartbeatInterval = null;
+
+  $(function(e) {
+      $("#input").focus();
+      $("#form").on("submit", function(e) {
+        e.preventDefault();
+        sendMessage($("#input").val());
+        return false;
+      });
+      $(".buttons button").click(function(e){
+        e.preventDefault();
+        var t = $(this),
+          v = t.data('value') != null ? t.data('value') : t.text(),
+          type;
+        if (t.is('.bpm button')) {
+          type = 'bpm';
+          t = parseInt(v, 10);
+          setBpm(t);
+          return;
+        }
+        else if (t.is('.pic button')) {
+          type = 'pic';
+        }
+        else if (t.is('.bkg button')) {
+          type = 'bkg';
+        }
+        else {
+          type = 'text';
+        }
+        if (type === 'text') {
+          $("#input").val(v);
+        }
+        if(!e.shiftKey) {
+          sendMessage(v, type);
+        }
+        return false;
+      });
+      $('#bpmrange').on('input change', setBpm);
+      $('#bpmnum').blur(setBpm);
+  });
+
+  /**
+   * Call initialization for Cast
+   */
+  window['__onGCastApiAvailable'] = function(loaded, errorInfo) {
+    if (loaded) {
+      initializeCastApi();
+    } else {
+      console.log(errorInfo);
+    }
+  }
+  
+  function startHeartbeat() {
+    if (heartbeatInterval == null) {
+      hearbeatInterval = setInterval(function(){
+        sendMessage('PPV', 'heartbeat');
+      }, 10000);
+    }
+  }
+  
+  function stopHeartbeat() {
+    if (heartbeatInterval != null) {
+      clearTimeout(heartbeatInterval);
+      heartbeatInterval = null;
+    }
+  }
+
+  /**
+   * initialization
+   */
+  function initializeCastApi() {
+    var sessionRequest = new chrome.cast.SessionRequest(applicationID);
+    var apiConfig = new chrome.cast.ApiConfig(sessionRequest,
+      sessionListener,
+      receiverListener);
+
+    chrome.cast.initialize(apiConfig, onInitSuccess, onError);
+  };
+
+  /**
+   * initialization success callback
+   */
+  function onInitSuccess() {
+    appendMessage("onInitSuccess");
+  }
+
+  /**
+   * initialization error callback
+   */
+  function onError(message) {
+    appendMessage("onError: "+JSON.stringify(message));
+  }
+
+  /**
+   * generic success callback
+   */
+  function onSuccess(message) {
+    appendMessage("onSuccess: "+message);
+  }
+
+  /**
+   * callback on success for stopping app
+   */
+  function onStopAppSuccess() {
+    stopHeartbeat();
+    appendMessage('onStopAppSuccess');
+  }
+
+  /**
+   * session listener during initialization
+   */
+  function sessionListener(e) {
+    appendMessage('New session ID:' + e.sessionId);
+    session = e;
+    session.addUpdateListener(sessionUpdateListener);
+    session.addMessageListener(namespace, receiverMessage);
+    if(!activeBefore) {
+      activeBefore = true;
+      recoverStatus();
+      startHeartbeat();
+    }
+  }
+
+  /**
+   * listener for session updates
+   */
+  function sessionUpdateListener(isAlive) {
+    var message = isAlive ? 'Session Updated' : 'Session Removed';
+    message += ': ' + session.sessionId;
+    appendMessage(message);
+    if (!isAlive) {
+      session = null;
+      activeBefore = false;
+      stopHeartbeat();
+    }
+    else if(!activeBefore) {
+      activeBefore = true;
+      recoverStatus();
+      startHeartbeat();
+    }
+  };
+
+  /**
+   * utility function to log messages from the receiver
+   * @param {string} namespace The namespace of the message
+   * @param {string} message A message string
+   */
+  function receiverMessage(namespace, message) {
+    appendMessage("receiverMessage: "+namespace+", "+message);
+  };
+
+  /**
+   * receiver listener during initialization
+   */
+  function receiverListener(e) {
+    if( e === chrome.cast.ReceiverAvailability.AVAILABLE ) {
+      appendMessage("receiver found");
+    }
+    else {
+      appendMessage("receiver list empty");
+    }
+  }
+
+  /**
+   * stop app/session
+   */
+  function stopApp() {
+    session.stop(onStopAppSuccess, onError);
+  }
+
+  /**
+   * send a message to the receiver using the custom namespace
+   * receiver CastMessageBus message handler will be invoked
+   * @param {string} message A message string
+   */
+  function sendMessage(message, type) {
+    if (!type) {
+      type = 'text';
+    }
+    if (type !== 'heartbeat') {
+      receiverStatus[type] = message;
+    }
+    if (session != null) {
+      session.sendMessage(namespace, {type: type, msg: message}, onSuccess.bind(this, "Message sent: " + message), onError);
+    }
+    else {
+      chrome.cast.requestSession(function(e) {
+          session = e;
+          session.sendMessage(namespace, {type: type, msg: message}, onSuccess.bind(this, "Message sent: " + message), onError);
+        }, onError);
+    }
+  }
+  
+  function recoverStatus() {
+    var k;
+    for(k in receiverStatus) {
+      if(receiverStatus.hasOwnProperty(k)) {
+        sendMessage(receiverStatus[k], k);
+      }
+    }
+  }
+
+  /**
+   * append message to debug message window
+   * @param {string} message A message string
+   */
+  function appendMessage(message) {
+    console.log(message);
+  };
+
+  /**
+   * handler for the transcribed text from the speech input
+   * @param {string} words A transcibed speech string
+   */
+  function transcribe(words) {
+    sendMessage(words);
+  }
+
+  function setBpm(e) {
+    var bpm,
+      setnum = true,
+      setrange = true;
+    if (typeof e === "number") {
+      bpm = parseInt(e, 10);
+    }
+    else {
+      if (e.target.id === "bpmrange") {
+        setrange = false;
+      }
+      else if (e.target.id === "bpmnum") {
+        setnum = false;
+      }
+      bpm = parseInt($(e.target).val());
+    }
+    if (setrange) {
+      $('#bpmrange').val(bpm);
+    }
+    if (setnum) {
+      $('#bpmnum').val(bpm);
+    }
+    sendMessage(bpm, 'bpm');
+  }
+}(jQuery);
+</script>
+</head>
+<body>
+<div id="top">
+	<form id="form" method="get">
+		<input id="input" class="border" type="text" size="30" onwebkitspeechchange="transcribe(this.value)" x-webkit-speech/>
+	</form>
+</div>
+<h2>Frasi</h2>
+<div class="buttons">
+  <button data-value="">VUOTO</button>
+  <button>#finalmenteliberi</button>
+  <button>Benvenuti al</button>
+  <button>ALZIAMO LE MANI</button>
+  <button>APPLAUSI</button>
+  <button>Fino alle 4 DENTRO!</button>
+  <button>Buonanotte!</button>
+</div>
+<h2>DJ</h2>
+<div class="buttons">
+  <button>Milla & La T</button>
+  <button>Milla De La Soul DJ</button>
+  <button>La T DJ</button>
+  <button>Iuri DJ</button>
+  <button>Raul De La Renta DJ</button>
+  <button>Dat Vila DJ</button>
+  <button>Thomas Dill DJ</button>
+  <button>Radda DJ</button>
+  <button>Albert DJ</button>
+  <button>Barbieturici DJ</button>
+  <button>Dee DJ</button>
+  <button>Did U 6?</button>
+  <button>Dorigo DJ</button>
+  <button>Enrico Meloni DJ</button>
+  <button>Pittaluga DJ</button>
+  <button>Kristine Vontrois DJ</button>
+  <button>Mads DJ</button>
+  <button>Manuela Doriani DJ</button>
+  <button>Mattia Matthew DJ</button>
+  <button>Matty P DJ</button>
+  <button>Moira DJ</button>
+  <button>Ovren DJ</button>
+  <button>Paola Dee DJ</button>
+  <button>Balzanelli DJ</button>
+</div>
+<h2>BPM</h2>
+<div class="buttons bpm">
+  <div class="slider">
+    <input type="range" class="slide" id="bpmrange" value="0" min="0" max="150" step="1">
+    <input type="number" class="num control" id="bpmnum" value="0" min="0" max="150">
+  </div>
+  <button data-value="0">No animation</button>
+  <button>92bpm</button>
+  <button>96bpm</button>
+  <button>103bpm</button>
+  <button>110bpm</button>
+  <button>128bpm</button>
+  <button>133bpm</button>
+</div>
+<h2>Immagini</h2>
+<div class="buttons pic">
+  <button data-value="">VUOTO</button>
+  <button data-value="https://cdn.hyperdev.com/us-east-1%3A16d81bf8-f70e-4230-acd3-bba65c6ac255%2Flogo.png?1466673592061">Logo</button>
+  <button data-value="https://cdn.hyperdev.com/us-east-1%3A16d81bf8-f70e-4230-acd3-bba65c6ac255%2Fdragfactor.png?1467392141871">Drag Factor</button>
+</div>
+<h2>Sfondo</h2>
+<div class="buttons bkg">
+  <button data-value="#000">NERO</button>
+  <button data-value="#fff">BIANCO</button>
+</div>
+<footer>&copy; 2016 <a href="http://www.bithouseweb.com" target="_blank">bitHOUSEweb S.r.l</a> -
+  <a href="https://glitch.com/edit/#!/rain-tortellini" target="_blank">HyperDev Project</a> -
+  <a href="http://www.padovapridevillage.it" target="_blank">For Padova Pride Village</a></footer>
+</body>
+</html>
