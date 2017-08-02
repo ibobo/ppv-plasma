@@ -1,0 +1,21 @@
+{
+  "name": "ppv-plasma",
+  "version": "0.0.1",
+  "description": "This runs a Chromecast with logos and text running to the beat",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.15.3"
+  },
+  "engines": {
+    "node": "8.x"
+  },
+  "keywords": [
+    "node",
+    "glitch",
+    "express"
+  ],
+  "license": "MIT"
+}
